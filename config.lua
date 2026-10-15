@@ -25,6 +25,12 @@ Config.KillReward = {
     notify  = true,   -- Show notification when cash reward is received
 }
 
+-- Server-side checks a kill must pass before it counts and pays the reward.
+Config.KillValidation = {
+    deathCooldownMs = 1500,  -- a player can only die once in this window (respawn takes ~2s)
+    extraDistance   = 50.0,  -- killer may be at most (arena size * 2 + this) metres from the victim
+}
+
 -- RR gained per kill. Deaths do not affect rating.
 Config.Rating = {
     perKill = 1,

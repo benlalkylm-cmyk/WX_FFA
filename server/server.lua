@@ -2,6 +2,7 @@ local FFA = {}
 local ZonePlayers = {}
 local SessionStats = {}
 local LeaderboardCache = { data = {}, built = 0 }
+local LastDeath = {}
 
 -- Ensure tables + leaderboard columns exist on start (MySQL + MariaDB safe).
 CreateThread(function()
@@ -172,6 +173,11 @@ lib.callback.register('mind_ffa:getStats', function(source)
     local identifier = getIdentifier(source)
     if not identifier then return 0, 0 end
 
+    local session = SessionStats[source]
+    if session then
+        return session.kills, session.deaths
+    end
+
     local result = MySQL.single.await('SELECT kills, deaths FROM ffa WHERE identifier = ?', { identifier })
     if result then
         return tonumber(result.kills) or 0, tonumber(result.deaths) or 0
@@ -197,25 +203,20 @@ end
 
 AddEventHandler('playerDropped', function (reason)
     local playerSource = source
-
-    flushSession(playerSource)
-    SessionStats[playerSource] = nil
+    local identifier
 
     for index, data in pairs(FFA) do
         if data.source == playerSource then
+            identifier = data.identifier
             removeZonePlayer(data.zoneID)
             FFA[index] = nil
             break
         end
     end
-end)
 
-RegisterServerEvent('mind_ffa:syncStats')
-AddEventHandler('mind_ffa:syncStats', function(kills, deaths)
-    SessionStats[source] = {
-        kills = tonumber(kills) or 0,
-        deaths = tonumber(deaths) or 0,
-    }
+    flushSession(playerSource, identifier)
+    SessionStats[playerSource] = nil
+    LastDeath[playerSource] = nil
 end)
 
 RegisterServerEvent('mind_ffa:removePlayer')
@@ -225,14 +226,16 @@ AddEventHandler('mind_ffa:removePlayer', function(zone)
     if not identifier then return end
 
     MySQL.update.await('DELETE FROM data_ffa WHERE identifier = ?', { identifier })
-    removeZonePlayer(zone)
 
     for index, data in pairs(FFA) do
         if data.identifier == identifier then
+            removeZonePlayer(data.zoneID)
             FFA[index] = nil
             break
         end
     end
+
+    flushSession(playerSource, identifier)
 end)
 
 RegisterServerEvent('mind_ffa:addPlayer')
@@ -245,6 +248,14 @@ AddEventHandler('mind_ffa:addPlayer', function(zone)
         if data.identifier == identifier then
             return
         end
+    end
+
+    if not SessionStats[playerSource] then
+        local row = MySQL.single.await('SELECT kills, deaths FROM ffa WHERE identifier = ?', { identifier })
+        SessionStats[playerSource] = {
+            kills = row and tonumber(row.kills) or 0,
+            deaths = row and tonumber(row.deaths) or 0,
+        }
     end
 
     MySQL.update.await('INSERT INTO data_ffa (identifier, zoneID) VALUES (?, ?) ON DUPLICATE KEY UPDATE zoneID = VALUES(zoneID)', { identifier, zone })
@@ -278,19 +289,9 @@ AddEventHandler('mind_ffa:setDimension', function(dimension)
 end)
 
 RegisterServerEvent('mind_ffa:saveStats')
-AddEventHandler('mind_ffa:saveStats', function(kills, tode)
-    local identifier = getIdentifier(source)
-    if not identifier then return end
-
-    SessionStats[source] = { kills = tonumber(kills) or 0, deaths = tonumber(tode) or 0 }
-
-    MySQL.update.await('UPDATE ffa SET kills = ?, deaths = ?, lastplayed = ? WHERE identifier = ?', {
-        tonumber(kills) or 0,
-        tonumber(tode) or 0,
-        os.time(),
-        identifier
-    })
-    LeaderboardCache.built = 0
+AddEventHandler('mind_ffa:saveStats', function()
+    -- Client-sent numbers are ignored; the server-side session is the source of truth.
+    flushSession(source)
 end)
 
 local function round(value, decimals)
@@ -365,12 +366,70 @@ local function addKillReward(playerSource)
     end
 end
 
+local function getFfaEntry(playerSource)
+    for _, data in pairs(FFA) do
+        if data.source == playerSource then
+            return data
+        end
+    end
+end
+
+local function sendStats(playerSource)
+    local session = SessionStats[playerSource]
+    if not session then return end
+    TriggerClientEvent('mind_ffa:setStats', playerSource, session.kills, session.deaths)
+end
+
+-- The victim reports their own death. Their death is always counted (once per respawn);
+-- the killer is only credited and paid when the server can confirm the kill is real.
 RegisterServerEvent('mind_ffa:killed')
 AddEventHandler('mind_ffa:killed', function (killer)
     local victim = source
-    killer = tonumber(killer)
+    local victimEntry = getFfaEntry(victim)
+    if not victimEntry or not SessionStats[victim] then return end
 
-    if not killer or not getPlayer(victim) or not getPlayer(killer) then return end
+    local victimPed = GetPlayerPed(victim)
+    if not victimPed or victimPed == 0 then return end
+
+    -- Health is synced from the victim's game and can arrive slightly after the event.
+    local dead = false
+    for _ = 1, 5 do
+        if GetEntityHealth(victimPed) <= 100 then
+            dead = true
+            break
+        end
+        Wait(200)
+    end
+    if not dead then return end
+
+    -- One death per life: respawn takes ~2s, so ignore repeats inside the cooldown.
+    local now = GetGameTimer()
+    if LastDeath[victim] and now - LastDeath[victim] < Config.KillValidation.deathCooldownMs then return end
+    LastDeath[victim] = now
+
+    SessionStats[victim].deaths = SessionStats[victim].deaths + 1
+    sendStats(victim)
+
+    killer = tonumber(killer)
+    if not killer or killer == victim then return end
+
+    local killerEntry = getFfaEntry(killer)
+    if not killerEntry or killerEntry.zoneID ~= victimEntry.zoneID or not SessionStats[killer] then return end
+    if not getPlayer(victim) or not getPlayer(killer) then return end
+
+    local killerPed = GetPlayerPed(killer)
+    if not killerPed or killerPed == 0 then return end
+
+    -- If the game recorded who caused the death, it must be the reported killer.
+    local deathSource = GetPedSourceOfDeath(victimPed)
+    if deathSource and deathSource ~= 0 and deathSource ~= killerPed then return end
+
+    local zone = Config.Zones[victimEntry.zoneID]
+    local maxDistance = (zone and zone.markersize or 150.0) * 2.0 + Config.KillValidation.extraDistance
+    if #(GetEntityCoords(victimPed) - GetEntityCoords(killerPed)) > maxDistance then return end
+
+    SessionStats[killer].kills = SessionStats[killer].kills + 1
+    sendStats(killer)
 
     exports.qbx_core:Notify(killer, ('You killed %s!'):format(getPlayerName(victim)), 'inform', nil, 'FFA-System')
     exports.qbx_core:Notify(victim, ('You were killed by %s!'):format(getPlayerName(killer)), 'inform', nil, 'FFA-System')

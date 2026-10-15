@@ -50,8 +50,13 @@ AddEventHandler('mind_ffa:getclient', function()
             return hash
         end
 
-        local function syncStats()
-            TriggerServerEvent('mind_ffa:syncStats', kills, tode)
+        local function pushHudStats()
+            SendNUIMessage({
+                stats = true,
+                kills = kills,
+                tode = tode,
+                kd = getKd(kills, tode)
+            })
         end
 
         local function pushLeaderboard(force)
@@ -245,7 +250,6 @@ AddEventHandler('mind_ffa:getclient', function()
                                     tode = tode,
                                     kd = getKd(kills, tode)
                                 })
-                                syncStats()
                                 Wait(500)
                                 SpawnRandom(PlayerZone)
                                 TriggerServerEvent('mind_ffa:setDimension', v.dimension)
@@ -393,7 +397,7 @@ AddEventHandler('mind_ffa:getclient', function()
                 PlayerZone = nil
                 notify("You have left the WarX TDM", 'success')
                 Wait(1000)
-                TriggerServerEvent('mind_ffa:saveStats',kills, tode)
+                TriggerServerEvent('mind_ffa:saveStats')
                 TriggerServerEvent('mind_ffa:setDimension', 0)
                 SendNUIMessage({action = 'showScoreboard', visible = false})
                 SendNUIMessage({type = "ui", display = false})
@@ -423,17 +427,8 @@ AddEventHandler('mind_ffa:getclient', function()
             end
 
             deadPlayer = true
-            if killerServerId then
-                TriggerServerEvent('mind_ffa:killed', killerServerId)
-            end
-            tode = tode + 1
-            SendNUIMessage({
-                stats = true,
-                kills = kills,
-                tode = tode,
-                kd = getKd(kills, tode)
-            })
-            syncStats()
+            -- The server counts the death and decides whether the killer gets credit.
+            TriggerServerEvent('mind_ffa:killed', killerServerId)
             Wait(1750)
             TriggerEvent("rxRevive:revivePlayerClient")
             Wait(200)
@@ -445,17 +440,17 @@ AddEventHandler('mind_ffa:getclient', function()
             end
         end)
 
+        RegisterNetEvent('mind_ffa:setStats')
+        AddEventHandler('mind_ffa:setStats', function(serverKills, serverDeaths)
+            kills = tonumber(serverKills) or kills
+            tode = tonumber(serverDeaths) or tode
+            if ffa then
+                pushHudStats()
+            end
+        end)
+
         RegisterNetEvent('mind_ffa:addKill')
         AddEventHandler('mind_ffa:addKill', function()
-            local ped = PlayerPedId()
-            kills = kills + 1
-            SendNUIMessage({
-                stats = true,
-                kills = kills,
-                tode = tode,
-                kd = getKd(kills, tode)
-            })
-            syncStats()
             TriggerEvent('weapontrigger3')
             setFullVitals()
             TriggerEvent('weapontrigger2')
