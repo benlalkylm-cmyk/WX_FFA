@@ -312,35 +312,6 @@ Config.Zones = {
 
         }
     },
-    ["SANDY MOTEL"] = {
-        maxPlayers = 25,
-        markermiddle = vector3(-3236.81, 4937.87, 101.22),
-        markersize = 90.0,
-        image = "https://i.ibb.co/5XPY4xZP/sandy-motel.png",
-        dimension = 8,
-        customMode = {
-            enabled = true,
-            label = "Carbine",
-            weapons = {
-                "WEAPON_CARBINERIFLE",
-            }
-        },
-        spawns = {
-            vector3(1538.8358, 3589.9958, 42.1167),
-            vector3(1539.0996, 3594.9343, 38.7660),
-            vector3(1530.9231, 3590.5188, 38.7621),
-            vector3(1503.6503, 3575.3210, 38.7300),
-            vector3(1511.1158, 3565.7959, 35.4027),
-            vector3(1529.8258, 3588.6404, 38.7267),
-            vector3(1568.7889, 3615.1477, 35.3339),
-            vector3(1517.2861, 3606.1240, 35.4914),
-            vector3(1582.4204, 3623.1973, 38.7313),
-            vector3(1551.0817, 3509.7981, 36.0152),
-            vector3(1524.4672, 3523.9290, 35.9260),
-            vector3(1571.9388, 3577.7957, 32.6876),
-        }
-        
-    },
     ["Clock Tower"] = {
         maxPlayers = 25,
         markermiddle = vector3(-3240.96, 4912.73, 103.45),
