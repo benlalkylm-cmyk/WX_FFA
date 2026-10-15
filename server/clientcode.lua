@@ -6,6 +6,7 @@ AddEventHandler('mind_ffa:getclient', function()
         local kills = 0
         local tode = 0
         local PlayerZone = nil
+        local deadPlayer = false
 
         local function round(value, decimals)
             if qbx and qbx.math and qbx.math.round then
@@ -277,35 +278,107 @@ AddEventHandler('mind_ffa:getclient', function()
             cb({})
         end)
 
-        function SpawnRandom(PlayerZone)
-            local spawncount = 0
-            for k, v in pairs(Config.Zones) do
-                if k == PlayerZone then
-                    for i = 1, #v.spawns do
-                        spawncount = spawncount + 1
-                    end
-                    local spawn = math.random (1, spawncount)
-                    SetEntityCoords(PlayerPedId(), v.spawns[spawn])
-                    if ffa then
-                        setFullVitals()
-                        exports['ox_inventory']:weaponWheel(true)
-                        TriggerEvent('rx_rprevive:inmatchlobby', "deathmatch", true)
-                        setFfaInventoryLocked(true)
-                        local mode = "kein Modus"
-                        if v.customMode.enabled == true then
-                            mode = v.customMode.label
-                        end
-                        if mode ~= "kein Modus" then
-                            RemoveAllPedWeapons(PlayerPedId(), true)
-                            for k1, k2 in pairs(v.customMode.weapons) do
-                                TriggerEvent('weapontrigger')
-                                GiveWeaponToPed(PlayerPedId(), GetHashKey(k2), 1000, false, false)
-                                SetCurrentPedWeapon(PlayerPedId(), GetHashKey(k2), true)
-                            end
-                        end
+        -- Picks the spawn farthest from the nearest living enemy, choosing randomly among
+        -- the best few so spawns stay hard to predict. Random when nobody else is around.
+        local function pickSpawn(zone)
+            local spawns = zone.spawns
+            local enemies = {}
+            local me = PlayerId()
+
+            for _, playerId in ipairs(GetActivePlayers()) do
+                if playerId ~= me then
+                    local enemyPed = GetPlayerPed(playerId)
+                    if DoesEntityExist(enemyPed) and not IsEntityDead(enemyPed) then
+                        enemies[#enemies + 1] = GetEntityCoords(enemyPed)
                     end
                 end
             end
+
+            if #enemies == 0 then
+                return spawns[math.random(1, #spawns)]
+            end
+
+            local scored = {}
+            for _, spawn in ipairs(spawns) do
+                local nearest = math.huge
+                for _, enemy in ipairs(enemies) do
+                    nearest = math.min(nearest, #(spawn - enemy))
+                end
+                scored[#scored + 1] = { coords = spawn, nearest = nearest }
+            end
+            table.sort(scored, function(a, b) return a.nearest > b.nearest end)
+
+            return scored[math.random(1, math.min(3, #scored))].coords
+        end
+
+        -- Face the middle of the arena after spawning.
+        local function headingToCentre(zone, coords)
+            local d = zone.markermiddle - coords
+            return GetHeadingFromVector_2d(d.x, d.y)
+        end
+
+        local function applyLoadout(zone)
+            setFullVitals()
+            exports['ox_inventory']:weaponWheel(true)
+            TriggerEvent('rx_rprevive:inmatchlobby', "deathmatch", true)
+            setFfaInventoryLocked(true)
+            local mode = "kein Modus"
+            if zone.customMode.enabled == true then
+                mode = zone.customMode.label
+            end
+            if mode ~= "kein Modus" then
+                RemoveAllPedWeapons(PlayerPedId(), true)
+                for k1, k2 in pairs(zone.customMode.weapons) do
+                    TriggerEvent('weapontrigger')
+                    GiveWeaponToPed(PlayerPedId(), GetHashKey(k2), 1000, false, false)
+                    SetCurrentPedWeapon(PlayerPedId(), GetHashKey(k2), true)
+                end
+            end
+        end
+
+        function SpawnRandom(PlayerZone)
+            local zone = Config.Zones[PlayerZone]
+            if not zone then return end
+
+            local spawn = pickSpawn(zone)
+            local ped = PlayerPedId()
+            SetEntityCoords(ped, spawn.x, spawn.y, spawn.z, false, false, false, false)
+            SetEntityHeading(ped, headingToCentre(zone, spawn))
+            if ffa then
+                applyLoadout(zone)
+            end
+        end
+
+        -- Brings the player back to life at a spawn point. FFA does this itself so it
+        -- doesn't depend on the server's death/revive script.
+        local function respawnInZone()
+            local zone = Config.Zones[PlayerZone]
+            if not zone then return end
+
+            local cleanupEvent = Config.Respawn and Config.Respawn.cleanupEvent
+            if cleanupEvent then
+                TriggerEvent(cleanupEvent)
+                Wait(100)
+            end
+
+            local spawn = pickSpawn(zone)
+            NetworkResurrectLocalPlayer(spawn.x, spawn.y, spawn.z, headingToCentre(zone, spawn), true, false)
+            local ped = PlayerPedId()
+            ClearPedTasksImmediately(ped)
+            ClearPedBloodDamage(ped)
+            TriggerEvent('weapontrigger3')
+            applyLoadout(zone)
+        end
+
+        local function drawRespawnCountdown(secondsLeft)
+            SetTextFont(4)
+            SetTextScale(0.0, 0.7)
+            SetTextColour(255, 255, 255, 230)
+            SetTextOutline()
+            SetTextCentre(true)
+            BeginTextCommandDisplayText('STRING')
+            AddTextComponentSubstringPlayerName(('RESPAWNING IN %d'):format(secondsLeft))
+            EndTextCommandDisplayText(0.5, 0.42)
         end
 
         Citizen.CreateThread(function()
@@ -339,7 +412,7 @@ AddEventHandler('mind_ffa:getclient', function()
                     for k, v in pairs(Config.Zones) do
                         if k == PlayerZone then
                             local dist = GetDistanceBetweenCoords(GetEntityCoords(GetPlayerPed(-1)), vector3(v.markermiddle.x, v.markermiddle.y, v.markermiddle.z))
-                            if dist >= v.markersize then
+                            if dist >= v.markersize and not deadPlayer then
                                 SpawnRandom(PlayerZone)
                                 notify("You are not allowed to leave the zone!", 'warning')
                             end
@@ -384,6 +457,10 @@ AddEventHandler('mind_ffa:getclient', function()
         RegisterCommand('quitdm', function()
             if ffa then
                 ffa = false
+                if IsEntityDead(PlayerPedId()) then
+                    NetworkResurrectLocalPlayer(Config.FFA.x, Config.FFA.y, Config.FFA.z, 0.0, true, false)
+                end
+                deadPlayer = false
                 ped = PlayerPedId()
                 RemoveAllPedWeapons(ped)
                 TriggerEvent("rxRevive:revivePlayerClient")
@@ -404,35 +481,52 @@ AddEventHandler('mind_ffa:getclient', function()
             end
         end)
 
-        local deadPlayer = false
-
-        AddEventHandler('gameEventTriggered', function(eventName, data)
-            if eventName ~= 'CEventNetworkEntityDamage' or not ffa then return end
-
-            local victim = data[1]
-            local attacker = data[2]
-
-            if victim ~= PlayerPedId() or not IsEntityDead(victim) or deadPlayer then return end
+        local function onFfaDeath(attacker)
+            if deadPlayer or not ffa then return end
+            deadPlayer = true
 
             local killerServerId
-            if attacker and attacker ~= 0 and IsEntityAPed(attacker) and IsPedAPlayer(attacker) then
+            if attacker and attacker ~= 0 and DoesEntityExist(attacker) and IsEntityAPed(attacker) and IsPedAPlayer(attacker) then
                 local killerPlayer = NetworkGetPlayerIndexFromPed(attacker)
                 if killerPlayer ~= -1 then
                     killerServerId = GetPlayerServerId(killerPlayer)
                 end
             end
 
-            deadPlayer = true
             -- The server counts the death and decides whether the killer gets credit.
             TriggerServerEvent('mind_ffa:killed', killerServerId)
-            Wait(1750)
-            TriggerEvent("rxRevive:revivePlayerClient")
-            Wait(200)
-            TriggerEvent('weapontrigger3')
-            setFullVitals()
-            if deadPlayer then
-                SpawnRandom(PlayerZone)
+
+            CreateThread(function()
+                local delayMs = math.floor(((Config.Respawn and Config.Respawn.delay) or 3) * 1000)
+                local respawnAt = GetGameTimer() + delayMs
+                while ffa and GetGameTimer() < respawnAt do
+                    drawRespawnCountdown(math.ceil((respawnAt - GetGameTimer()) / 1000))
+                    Wait(0)
+                end
+
+                if ffa then
+                    respawnInZone()
+                end
                 deadPlayer = false
+            end)
+        end
+
+        AddEventHandler('gameEventTriggered', function(eventName, data)
+            if eventName ~= 'CEventNetworkEntityDamage' or not ffa then return end
+            if data[1] ~= PlayerPedId() or not IsEntityDead(data[1]) then return end
+            onFfaDeath(data[2])
+        end)
+
+        -- Backup: catches deaths that don't come with a damage event (drowning, scripts, /kill).
+        CreateThread(function()
+            while true do
+                Wait(500)
+                if ffa and not deadPlayer then
+                    local ped = PlayerPedId()
+                    if IsEntityDead(ped) then
+                        onFfaDeath(GetPedSourceOfDeath(ped))
+                    end
+                end
             end
         end)
 

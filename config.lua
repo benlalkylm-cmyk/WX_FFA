@@ -33,6 +33,14 @@ Config.DeathPenalty = {
     notify  = true,   -- Show notification when money is removed
 }
 
+-- Respawn inside an arena (handled by FFA itself, no revive script needed)
+Config.Respawn = {
+    delay = 3, -- seconds dead before respawning, with an on-screen countdown
+    -- Optional client event fired just before respawning, so your normal death script can clear
+    -- its own death screen/state. Harmless if nothing listens to it. Set to false to disable.
+    cleanupEvent = 'rxRevive:revivePlayerClient',
+}
+
 -- Server-side checks a kill must pass before it counts and pays the reward.
 Config.KillValidation = {
     deathCooldownMs = 1500,  -- a player can only die once in this window (respawn takes ~2s)

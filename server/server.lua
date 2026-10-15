@@ -3,6 +3,8 @@ local ZonePlayers = {}
 local SessionStats = {}
 local LeaderboardCache = { data = {}, built = 0 }
 local LastDeath = {}
+local DeadState = {}  -- true from a counted death until the server sees the player alive again
+local LastHit = {}    -- last weapon hit each FFA player took: { attacker, time, willKill }
 
 -- Ensure tables + leaderboard columns exist on start (MySQL + MariaDB safe).
 CreateThread(function()
@@ -234,6 +236,8 @@ AddEventHandler('playerDropped', function (reason)
     flushSession(playerSource, identifier)
     SessionStats[playerSource] = nil
     LastDeath[playerSource] = nil
+    DeadState[playerSource] = nil
+    LastHit[playerSource] = nil
 end)
 
 RegisterServerEvent('mind_ffa:removePlayer')
@@ -257,6 +261,8 @@ AddEventHandler('mind_ffa:removePlayer', function(zone)
     if wasInFfa then
         exports.qbx_core:SetPlayerBucket(playerSource, 0)
     end
+    DeadState[playerSource] = nil
+    LastHit[playerSource] = nil
 
     flushSession(playerSource, identifier)
 end)
@@ -450,38 +456,51 @@ local function sendStats(playerSource)
     TriggerClientEvent('mind_ffa:setStats', playerSource, session.kills, session.deaths)
 end
 
--- The victim reports their own death. Their death is always counted (once per respawn);
--- the killer is only credited and paid when the server can confirm the kill is real.
-RegisterServerEvent('mind_ffa:killed')
-AddEventHandler('mind_ffa:killed', function (killer)
-    local victim = source
+local function getFfaPlayerByPed(ped)
+    if not ped or ped == 0 then return nil end
+    for _, data in pairs(FFA) do
+        if GetPlayerPed(data.source) == ped then
+            return data.source
+        end
+    end
+end
+
+-- Counts a death once per life, takes the death penalty, and credits/pays the killer
+-- only when the kill checks out. Called from the victim's report and from the server's
+-- own death check, whichever sees the death first.
+local function processDeath(victim, reportedKiller)
     local victimEntry = getFfaEntry(victim)
-    if not victimEntry or not SessionStats[victim] then return end
+    if not victimEntry or not SessionStats[victim] or DeadState[victim] then return end
 
     local victimPed = GetPlayerPed(victim)
-    if not victimPed or victimPed == 0 then return end
+    if not victimPed or victimPed == 0 or GetEntityHealth(victimPed) > 100 then return end
 
-    -- Health is synced from the victim's game and can arrive slightly after the event.
-    local dead = false
-    for _ = 1, 5 do
-        if GetEntityHealth(victimPed) <= 100 then
-            dead = true
-            break
-        end
-        Wait(200)
-    end
-    if not dead then return end
-
-    -- One death per life: respawn takes ~2s, so ignore repeats inside the cooldown.
     local now = GetGameTimer()
     if LastDeath[victim] and now - LastDeath[victim] < Config.KillValidation.deathCooldownMs then return end
+    DeadState[victim] = true
     LastDeath[victim] = now
 
     SessionStats[victim].deaths = SessionStats[victim].deaths + 1
     sendStats(victim)
     takeDeathPenalty(victim)
 
-    killer = tonumber(killer)
+    -- Who killed them: the game's recorded source of death first, then the victim's report,
+    -- then the last player who hit them in the past 5 seconds.
+    local deathSource = GetPedSourceOfDeath(victimPed)
+    local killer = getFfaPlayerByPed(deathSource)
+    if not killer then
+        killer = tonumber(reportedKiller)
+        local hit = LastHit[victim]
+        if not killer and hit and now - hit.time < 5000 then
+            killer = hit.attacker
+        end
+        -- If the game recorded a source of death, it must be the killer.
+        if killer and deathSource and deathSource ~= 0 and deathSource ~= GetPlayerPed(killer) then
+            killer = nil
+        end
+    end
+    LastHit[victim] = nil
+
     if not killer or killer == victim then return end
 
     local killerEntry = getFfaEntry(killer)
@@ -490,10 +509,6 @@ AddEventHandler('mind_ffa:killed', function (killer)
 
     local killerPed = GetPlayerPed(killer)
     if not killerPed or killerPed == 0 then return end
-
-    -- If the game recorded who caused the death, it must be the reported killer.
-    local deathSource = GetPedSourceOfDeath(victimPed)
-    if deathSource and deathSource ~= 0 and deathSource ~= killerPed then return end
 
     local zone = Config.Zones[victimEntry.zoneID]
     local maxDistance = (zone and zone.markersize or 150.0) * 2.0 + Config.KillValidation.extraDistance
@@ -507,6 +522,73 @@ AddEventHandler('mind_ffa:killed', function (killer)
     addKillReward(killer)
     TriggerClientEvent('mind_ffa:addKill', killer)
     TriggerEvent("leaderboard:playerKilled", killer, victim)
+end
+
+-- The victim's game reports its own death (fast path, includes who it thinks the killer is).
+RegisterServerEvent('mind_ffa:killed')
+AddEventHandler('mind_ffa:killed', function (killer)
+    local victim = source
+    if not getFfaEntry(victim) then return end
+
+    -- Health is synced from the victim's game and can arrive slightly after the event.
+    local victimPed = GetPlayerPed(victim)
+    for _ = 1, 5 do
+        if victimPed and victimPed ~= 0 and GetEntityHealth(victimPed) <= 100 then break end
+        Wait(200)
+        victimPed = GetPlayerPed(victim)
+    end
+
+    processDeath(victim, killer)
+end)
+
+-- Remember who hit whom, to name the killer when the victim doesn't report it
+-- and to spot players who survive a lethal hit.
+AddEventHandler('weaponDamageEvent', function(sender, data)
+    local attacker = tonumber(sender)
+    if not attacker or not getFfaEntry(attacker) or type(data) ~= 'table' then return end
+
+    local hitIds = data.hitGlobalIds or { data.hitGlobalId }
+    for _, netId in ipairs(hitIds) do
+        local entity = NetworkGetEntityFromNetworkId(netId)
+        if entity and entity ~= 0 then
+            local owner = NetworkGetEntityOwner(entity)
+            if owner and owner > 0 and owner ~= attacker and GetPlayerPed(owner) == entity and getFfaEntry(owner) then
+                LastHit[owner] = { attacker = attacker, time = GetGameTimer(), willKill = data.willKill == true }
+            end
+        end
+    end
+end)
+
+-- Server-side death check: counts deaths even if the victim's game never reports them,
+-- so blocking the report no longer skips the death or the death penalty.
+CreateThread(function()
+    while true do
+        Wait(500)
+        local now = GetGameTimer()
+
+        for _, data in pairs(FFA) do
+            local playerSource = data.source
+            local ped = GetPlayerPed(playerSource)
+
+            if ped and ped ~= 0 then
+                if GetEntityHealth(ped) <= 100 then
+                    if not DeadState[playerSource] then
+                        processDeath(playerSource, nil)
+                    end
+                else
+                    DeadState[playerSource] = nil
+
+                    -- A lethal hit 3+ seconds ago and still alive: likely godmode. Logged for admins.
+                    local hit = LastHit[playerSource]
+                    if hit and hit.willKill and now - hit.time > 3000 then
+                        print(('[wx_ffa] Possible godmode: %s (ID %s) survived a lethal hit from %s (ID %s)'):format(
+                            getPlayerName(playerSource), playerSource, getPlayerName(hit.attacker), hit.attacker))
+                        LastHit[playerSource] = nil
+                    end
+                end
+            end
+        end
+    end
 end)
 
 -- Wipe every player's FFA stats / leaderboard. Server console or admins only.
