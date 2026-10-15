@@ -159,7 +159,7 @@ lib.callback.register('mind_ffa:getZonePlayers', function(source, zoneName)
                 name = getPlayerName(pSource),
                 kills = kills,
                 deaths = deaths,
-                kd = Config.GetKd(kills),
+                kd = Config.GetKd(kills, deaths),
                 rankName = rankInfo.name,
                 rankColor = rankInfo.color,
                 isSelf = (pSource == source)
@@ -361,7 +361,7 @@ local function buildLeaderboard()
     for i, row in ipairs(rows) do
         local kills = tonumber(row.kills) or 0
         local deaths = tonumber(row.deaths) or 0
-        local kd = Config.GetKd(kills)
+        local kd = Config.GetKd(kills, deaths)
         local rankInfo = Config.GetRankProgress(Config.GetRating(kills, deaths))
 
         board[i] = {

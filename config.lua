@@ -52,14 +52,13 @@ Config.Rating = {
     perKill = 1,
 }
 
--- K/D value shown to players. Grows by `perKill` each kill; deaths never lower it.
-Config.Kd = {
-    perKill = 0.01,
-}
-
-function Config.GetKd(kills)
-    local perKill = (Config.Kd and Config.Kd.perKill) or 0.01
-    return math.floor(((tonumber(kills) or 0) * perKill) * 100 + 0.5) / 100
+-- Kill/death ratio: kills divided by deaths, rounded to 2 decimals.
+-- With no deaths yet, K/D equals the number of kills (e.g. 5 kills, 0 deaths = 5.00).
+function Config.GetKd(kills, deaths)
+    kills = math.max(0, tonumber(kills) or 0)
+    deaths = math.max(0, tonumber(deaths) or 0)
+    local ratio = deaths > 0 and (kills / deaths) or kills
+    return math.floor(ratio * 100 + 0.5) / 100
 end
 
 -- Rank tiers, ordered low -> high. `min` is the RR (= kills * perKill) needed to reach it.

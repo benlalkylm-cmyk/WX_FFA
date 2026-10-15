@@ -18,7 +18,7 @@ AddEventHandler('mind_ffa:getclient', function()
         end
 
         local function getKd(killCount, deathCount)
-            return Config.GetKd(killCount)
+            return Config.GetKd(killCount, deathCount)
         end
 
         local function notify(message, notifyType)
