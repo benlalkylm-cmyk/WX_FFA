@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="ui.css?v=3">
+    <script src="./script.js?v=3" defer></script>
+    <title>WarX FFA</title>
+</head>
+<body>
+    <!-- In-match floating HUD -->
+    <div class="hud-stats" id="hudStats" aria-live="polite">
+        <span class="hud-pill"><i>Kills</i><strong id="kills">—</strong></span>
+        <span class="hud-pill"><i>Deaths</i><strong id="tode">—</strong></span>
+        <span class="hud-pill"><i>K/D</i><strong id="kd">—</strong></span>
+    </div>
+
+    <!-- Hold-to-Show Match Scoreboard (Transparent Glassmorphic UI) -->
+    <div class="sb-overlay" id="sbOverlay" aria-hidden="true">
+        <div class="sb-card">
+            <!-- Scoreboard Header -->
+            <div class="sb-header">
+                <div class="sb-title-wrap">
+                    <span class="sb-badge">MATCH STATS</span>
+                    <h2 class="sb-arena-name" id="sbZoneName">TDM ARENA</h2>
+                </div>
+                <div class="sb-status">
+                    <span class="sb-live-dot"></span>
+                    <span>LIVE MATCH</span>
+                </div>
+            </div>
+
+            <!-- Key Player Stats Cards -->
+            <div class="sb-stats-grid">
+                <div class="sb-stat-box kills">
+                    <span class="sb-stat-label">Kills</span>
+                    <strong class="sb-stat-val" id="sbKills">0</strong>
+                </div>
+                <div class="sb-stat-box deaths">
+                    <span class="sb-stat-label">Deaths</span>
+                    <strong class="sb-stat-val" id="sbDeaths">0</strong>
+                </div>
+                <div class="sb-stat-box kd">
+                    <span class="sb-stat-label">K/D Ratio</span>
+                    <strong class="sb-stat-val" id="sbKd">0.00</strong>
+                </div>
+                <div class="sb-stat-box rank" id="sbRankBox">
+                    <span class="sb-stat-label">Rank</span>
+                    <div class="sb-rank-wrap">
+                        <span class="sb-rank-icon" id="sbRankIcon">R</span>
+                        <div>
+                            <strong class="sb-rank-title" id="sbRankName">Recruit</strong>
+                            <span class="sb-rank-rr" id="sbRating">0 RR</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Match Fraggers Table -->
+            <div class="sb-table-wrap">
+                <div class="sb-table-head">
+                    <span class="sb-col-rank">#</span>
+                    <span class="sb-col-player">Player</span>
+                    <span class="sb-col-kills">Kills</span>
+                    <span class="sb-col-deaths">Deaths</span>
+                    <span class="sb-col-kd">K/D</span>
+                </div>
+                <div class="sb-table-body" id="sbPlayerList">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Footer Keybind Hint -->
+            <div class="sb-footer">
+                <div class="sb-key-hint">
+                    <kbd>HOLD TAB</kbd>
+                    <span>Release key to close</span>
+                </div>
+                <div class="sb-quit-hint">Type <code>/quitdm</code> to exit match</div>
+            </div>
+        </div>
+    </div>
+
+    <main class="content" aria-label="FFA menu">
+        <section class="panel">
+            <!-- Header -->
+            <header class="panel-head">
+                <div class="brand">
+                    <div class="brand-mark">FFA</div>
+                    <div class="brand-text">
+                        <h1>WARX ARENA</h1>
+                        <span>Free-For-All Combat &middot; build 3</span>
+                    </div>
+                </div>
+
+                <nav class="tabs" role="tablist">
+                    <button class="tab active" data-tab="arenas" role="tab">Free For All</button>
+                    <button class="tab" data-tab="leaderboard" role="tab">Leaderboard</button>
+                </nav>
+
+                <div class="head-right">
+                    <div class="counter"><strong id="onlineCount">0</strong><span>Online</span></div>
+                    <div class="counter"><strong id="lobbyCount">0</strong><span>Arenas</span></div>
+                    <button class="close-btn" id="closeButton" type="button" aria-label="Close">&times;</button>
+                </div>
+            </header>
+
+            <div class="panel-body">
+                <!-- Left rail: player profile -->
+                <aside class="rail">
+                    <div class="rank-card" id="rankCard">
+                        <div class="rank-badge" id="rankBadge">R</div>
+                        <div class="rank-meta">
+                            <strong id="rankName">—</strong>
+                            <span id="ratingValue">— RR</span>
+                        </div>
+                        <div class="rank-progress">
+                            <div class="rank-progress-text">
+                                <span id="nextRankLabel">Next rank</span>
+                                <span id="rankProgressPct">—</span>
+                            </div>
+                            <div class="rank-bar"><span id="rankBarFill"></span></div>
+                        </div>
+                    </div>
+
+                    <p class="rail-label">Your Statistics</p>
+                    <div class="stat-grid">
+                        <div class="stat-box kills">
+                            <strong id="profKills">—</strong>
+                            <span>Kills</span>
+                        </div>
+                        <div class="stat-box deaths">
+                            <strong id="profDeaths">—</strong>
+                            <span>Deaths</span>
+                        </div>
+                        <div class="stat-box kd">
+                            <strong id="profKd">—</strong>
+                            <span>K/D Ratio</span>
+                        </div>
+                    </div>
+
+                    <p class="rail-label">Commands</p>
+                    <ul class="cmd-list">
+                        <li><code>/quitdm</code><span>Leave arena</span></li>
+                        <li><code>E</code><span>Open this menu</span></li>
+                    </ul>
+
+                    <div class="rail-foot">
+                        <div class="live-dot"></div>
+                        <span id="seasonLabel">Live &middot; Ranked FFA</span>
+                    </div>
+                </aside>
+
+                <!-- Right: tab views -->
+                <section class="views">
+                    <!-- ARENAS -->
+                    <div class="view active" data-view="arenas">
+                        <div class="view-head">
+                            <div>
+                                <h2>Choose Your Arena</h2>
+                                <p>Fight everyone. No teams, no allies — pure combat. Rack up kills to climb the board.</p>
+                            </div>
+                        </div>
+                        <div class="arena-grid" id="appendhere"></div>
+                    </div>
+
+                    <!-- LEADERBOARD -->
+                    <div class="view" data-view="leaderboard">
+                        <div class="view-head">
+                            <div>
+                                <h2>Global Leaderboard</h2>
+                                <p>Top soldiers ranked by total kills across every arena.</p>
+                            </div>
+                            <button class="ghost-btn" id="refreshBoard" type="button">Refresh</button>
+                        </div>
+
+                        <div class="lb-podium" id="lbPodium"></div>
+
+                        <div class="lb-head" id="lbTableHead" style="display:none">
+                            <span class="c-rank">#</span>
+                            <span class="c-player">Player</span>
+                            <span class="c-num">Kills</span>
+                            <span class="c-num">Deaths</span>
+                            <span class="c-num">K/D</span>
+                        </div>
+                        <div class="lb-body" id="leaderboardBody"></div>
+                        <div class="lb-empty" id="leaderboardEmpty">No ranked players yet — get in and start fragging.</div>
+                    </div>
+                </section>
+            </div>
+        </section>
+
+        <!-- Player profile modal (opens from a leaderboard row) -->
+        <div class="modal-overlay" id="profileModal" aria-hidden="true">
+            <div class="modal-card">
+                <button class="modal-close" id="modalClose" type="button" aria-label="Close">&times;</button>
+                <div class="modal-head">
+                    <span class="modal-avatar" id="mAvatar">?</span>
+                    <div class="modal-id">
+                        <div class="modal-rankbadge" id="mBadge">R</div>
+                        <div>
+                            <h3 id="mName">Player</h3>
+                            <span id="mRank">Recruit &middot; 0 RR</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-stats">
+                    <div class="mstat"><strong id="mKills">0</strong><span>Kills</span></div>
+                    <div class="mstat"><strong id="mDeaths">0</strong><span>Deaths</span></div>
+                    <div class="mstat"><strong id="mKd">0.00</strong><span>K/D</span></div>
+                    <div class="mstat"><strong id="mBoardRank">#0</strong><span>Global Rank</span></div>
+                </div>
+                <div class="modal-progress">
+                    <div class="rank-progress-text">
+                        <span id="mNextLabel">Next rank</span>
+                        <span id="mProgressPct">0%</span>
+                    </div>
+                    <div class="rank-bar"><span id="mBarFill"></span></div>
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+</html>

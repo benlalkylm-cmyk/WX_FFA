@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="ui.css">
+    <script src="./script.js" defer></script>
+    <title>WarX Deathmatch UI Preview</title>
+</head>
+<body>
+    <div class="stats" aria-live="polite">
+        <span>Kills <strong id="kills">0</strong></span>
+        <span>Deaths <strong id="tode">0</strong></span>
+        <span>KD <strong id="kd">0.00</strong></span>
+    </div>
+
+    <main class="content" aria-label="Deathmatch menu">
+        <section class="hud">
+            <aside class="sidebar">
+                <div class="brand">
+                    <div class="brand-left">
+                        <div class="brand-mark">M</div>
+                        <div>
+                            <h1>WarX Deathmatch</h1>
+                            <span>Deathmatch Control</span>
+                        </div>
+                    </div>
+                    <div class="live-dot"></div>
+                </div>
+
+                <div class="queue" id="appendhere"></div>
+            </aside>
+
+            <section class="stage">
+                <header class="topline">
+                    <div>
+                        <p class="eyebrow">Selected Arena</p>
+                        <h2 class="selected-title" id="selectedTitle">Select Arena</h2>
+                    </div>
+
+                    <div class="menu-stats" aria-live="polite">
+                        <span>Kills <strong id="menuKills">0</strong></span>
+                        <span>Deaths <strong id="menuTode">0</strong></span>
+                        <span>KD <strong id="menuKd">0.00</strong></span>
+                    </div>
+                </header>
+
+                <section class="hero">
+                    <img id="selectedImage" alt="">
+                    <div class="details">
+                        <div>
+                            <div class="metric-row">
+                                <div class="chip" id="selectedMode">Mode</div>
+                                <div class="chip" id="selectedPlayers">0 / 0 Players</div>
+                                <div class="chip">Ready</div>
+                            </div>
+                            <div class="capacity">
+                                <div class="capacity-text">
+                                    <span>Capacity</span>
+                                    <span id="capacityText">0%</span>
+                                </div>
+                                <div class="capacity-bar"><span id="capacityBar"></span></div>
+                            </div>
+                        </div>
+
+                        <button class="select" id="deployButton" type="button">Select Arena</button>
+                    </div>
+                </section>
+
+                <footer class="footer">
+                    <div class="info-card">
+                        <span>Status</span>
+                        <strong>Ready</strong>
+                    </div>
+                    <div class="info-card">
+                        <span>Loadout</span>
+                        <strong id="loadoutLabel">Mode</strong>
+                    </div>
+                    <div class="info-card">
+                        <span>Session</span>
+                        <strong>Ranked FFA</strong>
+                    </div>
+                </footer>
+            </section>
+        </section>
+    </main>
+
+    <script>
+        window.addEventListener('load', () => {
+            const arenas = [
+                ['La Fuente Blance', 'https://media.discordapp.net/attachments/1111823653764616262/1217148836674277447/Screenshot_2024-03-12_214850.png?format=webp&quality=lossless&width=1272&height=702', '8/25', 'Carbine'],
+                ['RED GARAGE', 'https://media.discordapp.net/attachments/1111823653764616262/1217148837353750588/Screenshot_2024-03-12_214952.png?format=webp&quality=lossless&width=1140&height=702', '14/25', 'Carbine'],
+                ['SANDY', 'https://media.discordapp.net/attachments/1111823653764616262/1217148839480262778/Screenshot_2024-03-12_215201.png?format=webp&quality=lossless&width=1212&height=702', '21/25', 'Carbine'],
+                ['G FACTORY', 'https://media.discordapp.net/attachments/1111823653764616262/1217148840189366413/Screenshot_2024-03-12_215218.png?format=webp&quality=lossless&width=1193&height=702', '5/25', 'Carbine'],
+                ['Burito Camp', 'https://media.discordapp.net/attachments/1111823653764616262/1217148838846926960/Screenshot_2024-03-12_215145.png?format=webp&quality=lossless&width=1129&height=702', '11/25', 'Carbine'],
+                ['SANDY MOTEL', 'https://media.discordapp.net/attachments/1111823653764616262/1217148835915370577/Screenshot_2024-03-12_215257.png?format=webp&quality=lossless&width=1205&height=702', '3/25', 'Carbine']
+            ];
+
+            arenas.forEach(([label, picture, player, modus]) => {
+                window.postMessage({ type: 'add', label, picture, player, modus }, '*');
+            });
+            window.postMessage({ action: 'openMenu', status: true }, '*');
+            window.postMessage({ stats: true, kills: 24, tode: 8, kd: 3.00 }, '*');
+        });
+    </script>
+</body>
+</html>

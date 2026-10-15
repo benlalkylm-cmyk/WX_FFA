@@ -1,0 +1,400 @@
+local FFA = {}
+local ZonePlayers = {}
+local SessionStats = {}
+local LeaderboardCache = { data = {}, built = 0 }
+
+-- Ensure tables + leaderboard columns exist on start (MySQL + MariaDB safe).
+CreateThread(function()
+    MySQL.query.await([[
+        CREATE TABLE IF NOT EXISTS `ffa` (
+            `identifier` char(50) NOT NULL,
+            `kills` int(11) DEFAULT 0,
+            `deaths` int(11) DEFAULT 0,
+            `name` varchar(100) DEFAULT NULL,
+            `discord` varchar(50) DEFAULT NULL,
+            `lastplayed` int(11) DEFAULT 0,
+            PRIMARY KEY (`identifier`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+    ]])
+
+    MySQL.query.await([[
+        CREATE TABLE IF NOT EXISTS `data_ffa` (
+            `identifier` char(50) NOT NULL,
+            `zoneID` varchar(100) NOT NULL,
+            PRIMARY KEY (`identifier`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
+    ]])
+
+    local existing = MySQL.query.await([[
+        SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ffa'
+    ]]) or {}
+
+    local have = {}
+    for _, col in ipairs(existing) do
+        have[(col.COLUMN_NAME or col.column_name or ''):lower()] = true
+    end
+
+    if not have.name then
+        MySQL.query.await("ALTER TABLE `ffa` ADD COLUMN `name` varchar(100) DEFAULT NULL")
+    end
+    if not have.discord then
+        MySQL.query.await("ALTER TABLE `ffa` ADD COLUMN `discord` varchar(50) DEFAULT NULL")
+    end
+    if not have.lastplayed then
+        MySQL.query.await("ALTER TABLE `ffa` ADD COLUMN `lastplayed` int(11) DEFAULT 0")
+    end
+
+    print('[wx_ffa] Database schema verified.')
+end)
+
+local function getPlayer(source)
+    return exports.qbx_core:GetPlayer(source)
+end
+
+local function getIdentifier(source)
+    local player = getPlayer(source)
+    return player and player.PlayerData and player.PlayerData.citizenid
+end
+
+local function getPlayerName(source)
+    local player = getPlayer(source)
+    local charinfo = player and player.PlayerData and player.PlayerData.charinfo
+
+    if charinfo then
+        local firstName = charinfo.firstname or charinfo.firstName
+        local lastName = charinfo.lastname or charinfo.lastName
+
+        if firstName and lastName then
+            return ('%s %s'):format(firstName, lastName)
+        end
+    end
+
+    return GetPlayerName(source) or ('ID %s'):format(source)
+end
+
+local function addZonePlayer(zone)
+    for _, zoneData in pairs(ZonePlayers) do
+        if zoneData.zone == zone then
+            zoneData.players = zoneData.players + 1
+            return
+        end
+    end
+end
+
+local function removeZonePlayer(zone)
+    for _, zoneData in pairs(ZonePlayers) do
+        if zoneData.zone == zone then
+            zoneData.players = math.max(zoneData.players - 1, 0)
+            return
+        end
+    end
+end
+
+local function keepNeedsFull(source)
+    if not getPlayer(source) then return end
+
+    exports.qbx_core:SetMetadata(source, 'hunger', 100)
+    exports.qbx_core:SetMetadata(source, 'thirst', 100)
+end
+
+for zone in pairs(Config.Zones) do
+    table.insert(ZonePlayers, { zone = zone, players = 0 })
+end
+
+CreateThread(function()
+    while true do
+        Wait(30000)
+
+        for _, data in pairs(FFA) do
+            keepNeedsFull(data.source)
+        end
+    end
+end)
+
+lib.callback.register('mind_ffa:getZoneData', function()
+    return ZonePlayers
+end)
+
+lib.callback.register('mind_ffa:getZonePlayers', function(source, zoneName)
+    local players = {}
+    for _, data in pairs(FFA) do
+        if not zoneName or data.zoneID == zoneName then
+            local pSource = data.source
+            local session = SessionStats[pSource]
+            local kills = session and session.kills or 0
+            local deaths = session and session.deaths or 0
+
+            if not session then
+                local result = MySQL.single.await('SELECT kills, deaths FROM ffa WHERE identifier = ?', { data.identifier })
+                if result then
+                    kills = tonumber(result.kills) or 0
+                    deaths = tonumber(result.deaths) or 0
+                end
+            end
+
+            local rankInfo = Config.GetRankProgress(Config.GetRating(kills, deaths))
+            table.insert(players, {
+                id = pSource,
+                name = getPlayerName(pSource),
+                kills = kills,
+                deaths = deaths,
+                kd = Config.GetKd(kills),
+                rankName = rankInfo.name,
+                rankColor = rankInfo.color,
+                isSelf = (pSource == source)
+            })
+        end
+    end
+
+    table.sort(players, function(a, b)
+        if a.kills == b.kills then
+            return a.deaths < b.deaths
+        end
+        return a.kills > b.kills
+    end)
+
+    return players
+end)
+
+lib.callback.register('mind_ffa:checkPlayerData', function(source)
+    local identifier = getIdentifier(source)
+    if not identifier then return false end
+
+    local data = MySQL.single.await('SELECT identifier FROM data_ffa WHERE identifier = ?', { identifier })
+    if not data then return false end
+
+    MySQL.update.await('DELETE FROM data_ffa WHERE identifier = ?', { identifier })
+    return true
+end)
+
+lib.callback.register('mind_ffa:getStats', function(source)
+    local identifier = getIdentifier(source)
+    if not identifier then return 0, 0 end
+
+    local result = MySQL.single.await('SELECT kills, deaths FROM ffa WHERE identifier = ?', { identifier })
+    if result then
+        return tonumber(result.kills) or 0, tonumber(result.deaths) or 0
+    end
+
+    MySQL.insert.await('INSERT INTO ffa (identifier, kills, deaths) VALUES (?, ?, ?)', { identifier, 0, 0 })
+    return 0, 0
+end)
+
+local function flushSession(playerSource, identifier)
+    identifier = identifier or getIdentifier(playerSource)
+    local session = SessionStats[playerSource]
+    if not identifier or not session then return end
+
+    MySQL.update('UPDATE ffa SET kills = ?, deaths = ?, lastplayed = ? WHERE identifier = ?', {
+        tonumber(session.kills) or 0,
+        tonumber(session.deaths) or 0,
+        os.time(),
+        identifier
+    })
+    LeaderboardCache.built = 0
+end
+
+AddEventHandler('playerDropped', function (reason)
+    local playerSource = source
+
+    flushSession(playerSource)
+    SessionStats[playerSource] = nil
+
+    for index, data in pairs(FFA) do
+        if data.source == playerSource then
+            removeZonePlayer(data.zoneID)
+            FFA[index] = nil
+            break
+        end
+    end
+end)
+
+RegisterServerEvent('mind_ffa:syncStats')
+AddEventHandler('mind_ffa:syncStats', function(kills, deaths)
+    SessionStats[source] = {
+        kills = tonumber(kills) or 0,
+        deaths = tonumber(deaths) or 0,
+    }
+end)
+
+RegisterServerEvent('mind_ffa:removePlayer')
+AddEventHandler('mind_ffa:removePlayer', function(zone)
+    local playerSource = source
+    local identifier = getIdentifier(playerSource)
+    if not identifier then return end
+
+    MySQL.update.await('DELETE FROM data_ffa WHERE identifier = ?', { identifier })
+    removeZonePlayer(zone)
+
+    for index, data in pairs(FFA) do
+        if data.identifier == identifier then
+            FFA[index] = nil
+            break
+        end
+    end
+end)
+
+RegisterServerEvent('mind_ffa:addPlayer')
+AddEventHandler('mind_ffa:addPlayer', function(zone)
+    local playerSource = source
+    local identifier = getIdentifier(playerSource)
+    if not identifier or not Config.Zones[zone] then return end
+
+    for _, data in pairs(FFA) do
+        if data.identifier == identifier then
+            return
+        end
+    end
+
+    MySQL.update.await('INSERT INTO data_ffa (identifier, zoneID) VALUES (?, ?) ON DUPLICATE KEY UPDATE zoneID = VALUES(zoneID)', { identifier, zone })
+    addZonePlayer(zone)
+    table.insert(FFA, { source = playerSource, zoneID = zone, identifier = identifier })
+
+    MySQL.update('UPDATE ffa SET name = ?, lastplayed = ? WHERE identifier = ?', {
+        getPlayerName(playerSource), os.time(), identifier
+    })
+
+    keepNeedsFull(playerSource)
+end)
+
+RegisterServerEvent('mind_ffa:setDimension')
+AddEventHandler('mind_ffa:setDimension', function(dimension)
+    local playerSource = source
+    dimension = tonumber(dimension)
+    if not dimension then return end
+
+    if dimension == 0 then
+        exports.qbx_core:SetPlayerBucket(playerSource, 0)
+        return
+    end
+
+    for _, zoneData in pairs(Config.Zones) do
+        if zoneData.dimension == dimension then
+            exports.qbx_core:SetPlayerBucket(playerSource, dimension)
+            return
+        end
+    end
+end)
+
+RegisterServerEvent('mind_ffa:saveStats')
+AddEventHandler('mind_ffa:saveStats', function(kills, tode)
+    local identifier = getIdentifier(source)
+    if not identifier then return end
+
+    SessionStats[source] = { kills = tonumber(kills) or 0, deaths = tonumber(tode) or 0 }
+
+    MySQL.update.await('UPDATE ffa SET kills = ?, deaths = ?, lastplayed = ? WHERE identifier = ?', {
+        tonumber(kills) or 0,
+        tonumber(tode) or 0,
+        os.time(),
+        identifier
+    })
+    LeaderboardCache.built = 0
+end)
+
+local function round(value, decimals)
+    local m = 10 ^ (decimals or 0)
+    return math.floor((tonumber(value) or 0) * m + 0.5) / m
+end
+
+local function buildLeaderboard()
+    local rows = MySQL.query.await(
+        'SELECT identifier, name, kills, deaths FROM ffa WHERE kills >= ? ORDER BY kills DESC, deaths ASC LIMIT ?',
+        { Config.Leaderboard.minKills or 1, Config.Leaderboard.limit or 25 }
+    ) or {}
+
+    local board = {}
+    for i, row in ipairs(rows) do
+        local kills = tonumber(row.kills) or 0
+        local deaths = tonumber(row.deaths) or 0
+        local kd = Config.GetKd(kills)
+        local rankInfo = Config.GetRankProgress(Config.GetRating(kills, deaths))
+
+        board[i] = {
+            rank = i,
+            name = row.name or 'Unknown Soldier',
+            kills = kills,
+            deaths = deaths,
+            kd = kd,
+            rating = rankInfo.rating,
+            rankName = rankInfo.name,
+            rankIcon = rankInfo.icon,
+            rankColor = rankInfo.color,
+            rankProgress = rankInfo.progress,
+            nextRank = rankInfo.nextName,
+        }
+    end
+
+    LeaderboardCache = { data = board, built = os.time() }
+    return board
+end
+
+lib.callback.register('mind_ffa:getLeaderboard', function(source, force)
+    if not force and (os.time() - LeaderboardCache.built) < (Config.Leaderboard.autoRefresh or 60) and #LeaderboardCache.data > 0 then
+        return LeaderboardCache.data
+    end
+
+    return buildLeaderboard()
+end)
+
+local function addKillReward(playerSource)
+    if not Config.KillReward or not Config.KillReward.enabled then return end
+    local amount = tonumber(Config.KillReward.amount) or 0
+    if amount <= 0 then return end
+
+    local account = Config.KillReward.account or 'cash'
+
+    local success = false
+    if exports.qbx_core and exports.qbx_core.AddMoney then
+        pcall(function()
+            exports.qbx_core:AddMoney(playerSource, account, amount, 'ffa-kill-reward')
+            success = true
+        end)
+    end
+
+    if not success then
+        local player = getPlayer(playerSource)
+        if player and player.Functions and player.Functions.AddMoney then
+            player.Functions.AddMoney(account, amount, 'ffa-kill-reward')
+        end
+    end
+
+    if Config.KillReward.notify ~= false then
+        exports.qbx_core:Notify(playerSource, ('+$%s Cash for kill!'):format(amount), 'success', nil, 'FFA-System')
+    end
+end
+
+RegisterServerEvent('mind_ffa:killed')
+AddEventHandler('mind_ffa:killed', function (killer)
+    local victim = source
+    killer = tonumber(killer)
+
+    if not killer or not getPlayer(victim) or not getPlayer(killer) then return end
+
+    exports.qbx_core:Notify(killer, ('You killed %s!'):format(getPlayerName(victim)), 'inform', nil, 'FFA-System')
+    exports.qbx_core:Notify(victim, ('You were killed by %s!'):format(getPlayerName(killer)), 'inform', nil, 'FFA-System')
+    addKillReward(killer)
+    TriggerClientEvent('mind_ffa:addKill', killer)
+    TriggerEvent("leaderboard:playerKilled", killer, victim)
+end)
+
+-- Wipe every player's FFA stats / leaderboard. Server console or admins only.
+-- Usage: ffawipe            -> clears the whole leaderboard
+--        ffawipe unnamed    -> clears only rows with no captured name
+RegisterCommand('ffawipe', function(source, args)
+    if source ~= 0 and not IsPlayerAceAllowed(source, 'command.ffawipe') then
+        return
+    end
+
+    if args[1] == 'unnamed' then
+        MySQL.query.await('DELETE FROM ffa WHERE name IS NULL OR name = ?', { '' })
+    else
+        MySQL.query.await('TRUNCATE TABLE ffa')
+        MySQL.query.await('TRUNCATE TABLE data_ffa')
+    end
+
+    LeaderboardCache = { data = {}, built = 0 }
+    print('[wx_ffa] Leaderboard wiped.')
+end, true)
+
