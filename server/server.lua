@@ -366,6 +366,38 @@ local function addKillReward(playerSource)
     end
 end
 
+-- Takes up to Config.DeathPenalty.amount; never pushes the balance below 0.
+local function takeDeathPenalty(playerSource)
+    local penalty = Config.DeathPenalty
+    if not penalty or not penalty.enabled then return end
+    local amount = tonumber(penalty.amount) or 0
+    if amount <= 0 then return end
+
+    local player = getPlayer(playerSource)
+    if not player then return end
+
+    local account = penalty.account or 'cash'
+    local balance = tonumber(player.PlayerData.money and player.PlayerData.money[account]) or 0
+    local toTake = math.min(amount, math.floor(balance))
+    if toTake <= 0 then return end
+
+    local removed = false
+    if exports.qbx_core and exports.qbx_core.RemoveMoney then
+        local ok, result = pcall(function()
+            return exports.qbx_core:RemoveMoney(playerSource, account, toTake, 'ffa-death-penalty')
+        end)
+        removed = ok and result ~= false
+    end
+
+    if not removed and player.Functions and player.Functions.RemoveMoney then
+        removed = player.Functions.RemoveMoney(account, toTake, 'ffa-death-penalty') ~= false
+    end
+
+    if removed and penalty.notify ~= false then
+        exports.qbx_core:Notify(playerSource, ('-$%s for dying!'):format(toTake), 'error', nil, 'FFA-System')
+    end
+end
+
 local function getFfaEntry(playerSource)
     for _, data in pairs(FFA) do
         if data.source == playerSource then
@@ -409,6 +441,7 @@ AddEventHandler('mind_ffa:killed', function (killer)
 
     SessionStats[victim].deaths = SessionStats[victim].deaths + 1
     sendStats(victim)
+    takeDeathPenalty(victim)
 
     killer = tonumber(killer)
     if not killer or killer == victim then return end

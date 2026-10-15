@@ -25,6 +25,14 @@ Config.KillReward = {
     notify  = true,   -- Show notification when cash reward is received
 }
 
+-- Money taken from a player each time they die in FFA (counted once per life, on the server)
+Config.DeathPenalty = {
+    enabled = true,   -- Enable/disable losing money on death
+    amount  = 250,    -- Amount removed per death
+    account = 'cash', -- Account type ('cash' or 'bank')
+    notify  = true,   -- Show notification when money is removed
+}
+
 -- Server-side checks a kill must pass before it counts and pays the reward.
 Config.KillValidation = {
     deathCooldownMs = 1500,  -- a player can only die once in this window (respawn takes ~2s)
