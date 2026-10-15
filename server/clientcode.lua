@@ -55,7 +55,8 @@ AddEventHandler('mind_ffa:getclient', function()
                 stats = true,
                 kills = kills,
                 tode = tode,
-                kd = getKd(kills, tode)
+                kd = getKd(kills, tode),
+                alwaysShow = Config.AlwaysShowHud == true
             })
         end
 
@@ -223,57 +224,52 @@ AddEventHandler('mind_ffa:getclient', function()
         RegisterNUICallback('select', function(data, cb)
             for k, v in pairs(Config.Zones) do
                 if k == data.label then
-                    local zoneData = lib.callback.await('mind_ffa:getZoneData', false)
+                    -- The server checks room, location and puts the player in the arena's dimension.
+                    local joined, reason = lib.callback.await('mind_ffa:joinZone', false, k)
+                    if not joined then
+                        notify(reason or "You can't join this arena right now.", 'error')
+                    else
+                        ffa = true
+                        PlayerZone = data.label
+                        setFfaInventoryLocked(true)
+                        kills, tode = lib.callback.await('mind_ffa:getStats', false)
 
-                    for k1, v1 in pairs(zoneData) do
-                        if v1.zone == k then
-                            if v1.players >= v.maxPlayers then
-                                notify("This area is full!", 'error')
-                            else
-                                ffa = true
-                                PlayerZone = data.label
-                                setFfaInventoryLocked(true)
-                                kills, tode = lib.callback.await('mind_ffa:getStats', false)
-
-                                SendNUIMessage({
-                                    type = "ui",
-                                    display = true
-                                })
-                                SetNuiFocus(false, false)
-                                SendNUIMessage({
-                                    action = 'openMenu',
-                                    status = false,
-                                })
-                                SendNUIMessage({
-                                    stats = true,
-                                    kills = kills,
-                                    tode = tode,
-                                    kd = getKd(kills, tode)
-                                })
-                                Wait(500)
-                                SpawnRandom(PlayerZone)
-                                TriggerServerEvent('mind_ffa:setDimension', v.dimension)
-                                TriggerServerEvent("mind_ffa:addPlayer", PlayerZone)
-                                Wait(500)
-                                TriggerEvent('weapontrigger3')
-                                setFullVitals()
-                                local mode = "kein Modus"
-                                if v.customMode.enabled == true then
-                                    mode = v.customMode.label
-                                end
-                                if mode ~= "kein Modus" then
-                                    RemoveAllPedWeapons(PlayerPedId(), true)
-                                    for k1, k2 in pairs(v.customMode.weapons) do
-                                        TriggerEvent('weapontrigger')
-                                        GiveWeaponToPed(PlayerPedId(), GetHashKey(k2), 1000, false, false)
-                                    end
-                                    Wait(100)
-                                    SetCurrentPedWeapon(PlayerPedId(), GetHashKey(v.customMode.weapons[1]), true)
-                                end
-                                notify("You have entered the WarX TDM")
-                                TriggerEvent('chat:addMessage', { color = { 47, 128, 200 }, multiline = true, args = {"You have joined Deathmatch. Use command /quitdm to exit." }})
-                            end
+                        SendNUIMessage({
+                            type = "ui",
+                            display = true
+                        })
+                        SetNuiFocus(false, false)
+                        SendNUIMessage({
+                            action = 'openMenu',
+                            status = false,
+                        })
+                        SendNUIMessage({
+                            stats = true,
+                            kills = kills,
+                            tode = tode,
+                            kd = getKd(kills, tode),
+                            alwaysShow = Config.AlwaysShowHud == true
+                        })
+                        Wait(500)
+                        SpawnRandom(PlayerZone)
+                        Wait(500)
+                        TriggerEvent('weapontrigger3')
+                        setFullVitals()
+                        local mode = "kein Modus"
+                        if v.customMode.enabled == true then
+                            mode = v.customMode.label
                         end
+                        if mode ~= "kein Modus" then
+                            RemoveAllPedWeapons(PlayerPedId(), true)
+                            for k1, k2 in pairs(v.customMode.weapons) do
+                                TriggerEvent('weapontrigger')
+                                GiveWeaponToPed(PlayerPedId(), GetHashKey(k2), 1000, false, false)
+                            end
+                            Wait(100)
+                            SetCurrentPedWeapon(PlayerPedId(), GetHashKey(v.customMode.weapons[1]), true)
+                        end
+                        notify("You have entered the WarX TDM")
+                        TriggerEvent('chat:addMessage', { color = { 47, 128, 200 }, multiline = true, args = {"You have joined Deathmatch. Use command /quitdm to exit." }})
                     end
                 end
             end

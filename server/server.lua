@@ -74,6 +74,23 @@ local function getPlayerName(source)
     return GetPlayerName(source) or ('ID %s'):format(source)
 end
 
+local function getFfaEntry(playerSource)
+    for _, data in pairs(FFA) do
+        if data.source == playerSource then
+            return data
+        end
+    end
+end
+
+local function getZoneCount(zone)
+    for _, zoneData in pairs(ZonePlayers) do
+        if zoneData.zone == zone then
+            return zoneData.players
+        end
+    end
+    return 0
+end
+
 local function addZonePlayer(zone)
     for _, zoneData in pairs(ZonePlayers) do
         if zoneData.zone == zone then
@@ -227,28 +244,56 @@ AddEventHandler('mind_ffa:removePlayer', function(zone)
 
     MySQL.update.await('DELETE FROM data_ffa WHERE identifier = ?', { identifier })
 
+    local wasInFfa = false
     for index, data in pairs(FFA) do
         if data.identifier == identifier then
             removeZonePlayer(data.zoneID)
             FFA[index] = nil
+            wasInFfa = true
             break
         end
+    end
+
+    if wasInFfa then
+        exports.qbx_core:SetPlayerBucket(playerSource, 0)
     end
 
     flushSession(playerSource, identifier)
 end)
 
-RegisterServerEvent('mind_ffa:addPlayer')
-AddEventHandler('mind_ffa:addPlayer', function(zone)
+-- Joining is decided here, not by the client: the arena must exist and have room,
+-- the player must be at the Deathmatch NPC and not already in an arena.
+lib.callback.register('mind_ffa:joinZone', function(source, zone)
     local playerSource = source
+    local zoneConfig = Config.Zones[zone]
+    if type(zone) ~= 'string' or not zoneConfig then
+        return false, 'This arena does not exist.'
+    end
+
     local identifier = getIdentifier(playerSource)
-    if not identifier or not Config.Zones[zone] then return end
+    if not identifier then
+        return false, 'Your character is not loaded yet.'
+    end
 
     for _, data in pairs(FFA) do
-        if data.identifier == identifier then
-            return
+        if data.source == playerSource or data.identifier == identifier then
+            return false, 'You are already in an arena.'
         end
     end
+
+    local ped = GetPlayerPed(playerSource)
+    if not ped or ped == 0 or #(GetEntityCoords(ped) - Config.FFA) > (Config.JoinDistance or 15.0) then
+        return false, 'Go to the Deathmatch NPC to join an arena.'
+    end
+
+    if getZoneCount(zone) >= zoneConfig.maxPlayers then
+        return false, 'This arena is full!'
+    end
+
+    -- Reserve the slot before any database wait, so two players can't take the last one.
+    addZonePlayer(zone)
+    table.insert(FFA, { source = playerSource, zoneID = zone, identifier = identifier })
+    exports.qbx_core:SetPlayerBucket(playerSource, zoneConfig.dimension)
 
     if not SessionStats[playerSource] then
         local row = MySQL.single.await('SELECT kills, deaths FROM ffa WHERE identifier = ?', { identifier })
@@ -259,14 +304,12 @@ AddEventHandler('mind_ffa:addPlayer', function(zone)
     end
 
     MySQL.update.await('INSERT INTO data_ffa (identifier, zoneID) VALUES (?, ?) ON DUPLICATE KEY UPDATE zoneID = VALUES(zoneID)', { identifier, zone })
-    addZonePlayer(zone)
-    table.insert(FFA, { source = playerSource, zoneID = zone, identifier = identifier })
-
     MySQL.update('UPDATE ffa SET name = ?, lastplayed = ? WHERE identifier = ?', {
         getPlayerName(playerSource), os.time(), identifier
     })
 
     keepNeedsFull(playerSource)
+    return true
 end)
 
 RegisterServerEvent('mind_ffa:setDimension')
@@ -275,16 +318,19 @@ AddEventHandler('mind_ffa:setDimension', function(dimension)
     dimension = tonumber(dimension)
     if not dimension then return end
 
+    local entry = getFfaEntry(playerSource)
+
+    -- Leaving the arena dimension is only allowed once the player has left FFA.
     if dimension == 0 then
+        if entry then return end
         exports.qbx_core:SetPlayerBucket(playerSource, 0)
         return
     end
 
-    for _, zoneData in pairs(Config.Zones) do
-        if zoneData.dimension == dimension then
-            exports.qbx_core:SetPlayerBucket(playerSource, dimension)
-            return
-        end
+    -- Otherwise only the dimension of the arena the server put them in.
+    local zoneConfig = entry and Config.Zones[entry.zoneID]
+    if zoneConfig and zoneConfig.dimension == dimension then
+        exports.qbx_core:SetPlayerBucket(playerSource, dimension)
     end
 end)
 
@@ -395,14 +441,6 @@ local function takeDeathPenalty(playerSource)
 
     if removed and penalty.notify ~= false then
         exports.qbx_core:Notify(playerSource, ('-$%s for dying!'):format(toTake), 'error', nil, 'FFA-System')
-    end
-end
-
-local function getFfaEntry(playerSource)
-    for _, data in pairs(FFA) do
-        if data.source == playerSource then
-            return data
-        end
     end
 end
 

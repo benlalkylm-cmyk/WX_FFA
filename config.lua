@@ -110,6 +110,8 @@ function Config.GetRankProgress(rating)
 end
 
 Config.FFA = vector3(220.40, -932.24, 30.13)
+-- Players must be within this many metres of Config.FFA (the Deathmatch NPC) to join an arena.
+Config.JoinDistance = 15.0
 Config.FFAPed = {
     model = "s_m_y_swat_01",
     heading = 340.0,
