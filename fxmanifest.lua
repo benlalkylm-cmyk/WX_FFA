@@ -28,11 +28,9 @@ files {
 
 export 'getFFAStatus'
 
--- Also required at runtime (not listed below because their resource names vary per server).
--- Without them revive and the FFA loadout silently do nothing:
---   * a revive script handling 'rxRevive:revivePlayerClient' and 'rx_rprevive:inmatchlobby'
---   * a weapon script handling 'weapontrigger', 'weapontrigger2' and 'weapontrigger3'
--- Add those resources to `dependencies` once you know their names.
+-- Works with Tiger_EMS (0.7.0+): FFA sends 'rx_rprevive:inmatchlobby' on join/leave, and Tiger EMS then leaves
+-- match deaths to FFA (no down, death screen, hospital or injuries). FFA respawns players itself.
+-- Also used at runtime if present: a weapon script handling 'weapontrigger', 'weapontrigger2' and 'weapontrigger3'.
 
 dependencies {
     'qbx_core',

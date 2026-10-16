@@ -36,8 +36,8 @@ Config.DeathPenalty = {
 -- Respawn inside an arena (handled by FFA itself, no revive script needed)
 Config.Respawn = {
     delay = 3, -- seconds dead before respawning, with an on-screen countdown
-    -- Optional client event fired just before respawning, so your normal death script can clear
-    -- its own death screen/state. Harmless if nothing listens to it. Set to false to disable.
+    -- Client event fired just before respawning. Tiger EMS answers it during a match (clears limp/blood
+    -- effects). Harmless if nothing listens to it. Set to false to disable.
     cleanupEvent = 'rxRevive:revivePlayerClient',
 }
 
